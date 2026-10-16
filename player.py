@@ -183,7 +183,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk v10"
+    VERSION = "nontechyk v11"
 
     def betRequest(self, game_state):
         try:
@@ -291,7 +291,8 @@ class Player:
             if to_call >= stack * 0.4:
                 # Shovers' ranges beat random hands, so demand extra equity to call.
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
-                return all_in() if eq >= pot_odds + 0.12 else check_fold()
+                # Multiway shoves make pot odds look cheap: also need more than a fair share.
+                return all_in() if eq >= max(pot_odds + 0.15, 1.1 / (num_opp + 1)) else check_fold()
             # The shorter we are, the wider we shove (blinds eat us otherwise).
             push_share = 1.25 if m > 8 else (1.1 if m > 5 else 0.95)
             if heads_up:
