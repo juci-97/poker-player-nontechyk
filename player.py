@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v22"
+    VERSION = "nontechyk v23"
 
     def betRequest(self, game_state):
         try:
@@ -321,6 +321,20 @@ class Player:
                 if eq >= 0.5:
                     return all_in()
                 return call() if eq >= pot_odds + 0.05 else check_fold()
+
+        # A loose raiser attacks our blinds (bots now target "known folders"): defend by
+        # equity against its actual raising range instead of folding almost everything.
+        if not board and to_call > 0 and me['bet'] <= bb:
+            raisers = [p for p in opponents if p['bet'] > bb]
+            if len(raisers) == 1 and raisers[0]['stack'] > 0:
+                rate = agg_rate(raisers[0]['name'])
+                if rate is not None and rate >= 0.3:
+                    eq = equity_vs_range(hole, rate)
+                    pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
+                    log("defend vs steal range=%.2f eq=%.2f pot_odds=%.2f" % (rate, eq, pot_odds))
+                    if eq >= 0.55:
+                        return all_in() if stack <= 25 * bb else raise_by(3 * to_call)
+                    return call() if eq >= max(0.4, pot_odds + 0.02) else check_fold()
 
         # Judge by behaviour only (version strings can lie): if every opponent has stayed
         # passive over its recent hands and nobody has bet into us, a min-raise takes the pot.
