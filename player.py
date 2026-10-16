@@ -163,6 +163,10 @@ def is_aggressor(name):
     return sum(recent) >= 3 and sum(recent) >= 0.4 * len(recent)
 
 
+def pot_odds_of(to_call, pot):
+    return to_call / float(pot + to_call) if to_call else 0.0
+
+
 def chen_score(hole):
     (r1, s1), (r2, s2) = hole
     hi, lo = max(r1, r2), min(r1, r2)
@@ -179,7 +183,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v7"
+    VERSION = "nontechyk tight-aggressive equity bot v8"
 
     def betRequest(self, game_state):
         try:
@@ -268,7 +272,8 @@ class Player:
                                 len(alive), call, check_fold, raise_by, all_in)
         top_bet = max([p['bet'] for p in opponents] or [0])
         loose_bettor = any(is_loose(p['name']) for p in opponents if p['bet'] == top_bet and top_bet > 0)
-        return self.postflop(hole, board, to_call, stack, pot, num_opp, loose_bettor,
+        reraised = me['bet'] > 0 and to_call > 0
+        return self.postflop(hole, board, to_call, stack, pot, num_opp, loose_bettor, reraised,
                              call, check_fold, raise_by, all_in)
 
     def preflop(self, hole, to_call, stack, bb, pot, effective, num_opp, table_size,
@@ -317,7 +322,7 @@ class Player:
             return call()
         return call() if to_call == 0 else check_fold()
 
-    def postflop(self, hole, board, to_call, stack, pot, num_opp, loose_bettor,
+    def postflop(self, hole, board, to_call, stack, pot, num_opp, loose_bettor, reraised,
                  call, check_fold, raise_by, all_in):
         eq = equity(hole, board, num_opp)
         # A big bet narrows the bettor's range well above random hands: discount our equity.
@@ -328,6 +333,12 @@ class Player:
             if loose_bettor:
                 discount *= 0.4
             eq -= discount
+        # They raised over our own bet on this street: that range is strong, and we stop
+        # re-raising unless we hold a near-lock (avoids raise wars into sets and flushes).
+        if reraised:
+            eq -= 0.1
+            if eq < 0.75:
+                return call() if eq >= pot_odds_of(to_call, pot) + 0.05 else check_fold()
         pot_odds = to_call / float(pot + to_call) if to_call else 0.0
         # Strength relative to a fair share of the pot, so multiway hands aren't underplayed.
         share = eq * (num_opp + 1)
