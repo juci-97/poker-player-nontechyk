@@ -148,7 +148,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v3"
+    VERSION = "nontechyk tight-aggressive equity bot v4"
 
     def betRequest(self, game_state):
         try:
@@ -277,6 +277,10 @@ class Player:
     def postflop(self, hole, board, to_call, stack, pot, num_opp,
                  call, check_fold, raise_by, all_in):
         eq = equity(hole, board, num_opp)
+        # A big bet narrows the bettor's range well above random hands: discount our equity.
+        if to_call > 0:
+            pressure = min(1.0, to_call / float(max(pot, 1)))
+            eq -= 0.05 + 0.2 * pressure
         pot_odds = to_call / float(pot + to_call) if to_call else 0.0
         # Strength relative to a fair share of the pot, so multiway hands aren't underplayed.
         share = eq * (num_opp + 1)
