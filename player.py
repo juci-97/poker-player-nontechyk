@@ -183,7 +183,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v8"
+    VERSION = "nontechyk v9"
 
     def betRequest(self, game_state):
         try:
@@ -248,13 +248,13 @@ class Player:
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs maniac eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
-                return call() if eq >= pot_odds + 0.03 else check_fold()
+                return call() if eq >= pot_odds + 0.06 else check_fold()
             # Habitual big raiser: its range is wide, so re-shove good hands and call fair prices.
             if bettors and all(is_aggressor(p['name']) for p in bettors):
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs aggressor eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
-                if eq >= 0.55:
+                if eq >= 0.62:
                     return all_in()
                 return call() if eq >= pot_odds + 0.03 else check_fold()
 
@@ -328,7 +328,7 @@ class Player:
         # A big bet narrows the bettor's range well above random hands: discount our equity.
         if to_call > 0:
             pressure = min(1.0, to_call / float(max(pot, 1)))
-            discount = 0.05 + 0.2 * pressure
+            discount = 0.08 + 0.25 * pressure
             # Loose bettors bet big with weak hands too: discount less so they can't bully us.
             if loose_bettor:
                 discount *= 0.4
@@ -344,6 +344,10 @@ class Player:
         share = eq * (num_opp + 1)
         log("postflop eq=%.2f share=%.2f pot=%d to_call=%d opp=%d" % (eq, share, pot, to_call, num_opp))
 
+        # Calling off a big chunk of the stack needs a clearly winning hand, not one pair.
+        if to_call >= stack * 0.3:
+            return call() if eq >= max(0.6, pot_odds + 0.1) else check_fold()
+
         if eq >= 0.85 or (share >= 1.7 and eq >= 0.4):
             if to_call >= stack * 0.3:
                 return all_in()
@@ -356,7 +360,8 @@ class Player:
             return call()
         if eq >= 0.5:
             if to_call == 0:
-                return raise_by(pot * 0.5)
+                # Callers now hold real hands: only bet when clearly ahead, else check.
+                return raise_by(pot * 0.5) if eq >= 0.6 else check_fold()
             # Big bets usually mean a strong hand; demand extra equity.
             margin = 0.1 if to_call > pot * 0.5 else 0.0
             return call() if eq >= pot_odds + margin else check_fold()
