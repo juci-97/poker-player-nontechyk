@@ -157,6 +157,12 @@ def is_loose(name):
     return is_maniac(name) or is_aggressor(name) or (rate is not None and rate >= 0.4)
 
 
+def is_hyper(name):
+    # Shoves most hands (e.g. every hand heads-up): its range really is random.
+    recent = RECENT.get(name, ())
+    return len(recent) >= 8 and sum(recent) >= 0.6 * len(recent)
+
+
 def is_aggressor(name):
     # Opens big preflop most hands (e.g. a fixed 100-chip raise to steal blinds).
     recent = RAISES.get(name, ())
@@ -183,7 +189,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk v11"
+    VERSION = "nontechyk v12"
 
     def betRequest(self, game_state):
         try:
@@ -248,6 +254,8 @@ class Player:
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs maniac eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
+                if all(is_hyper(p['name']) for p in bettors):
+                    return call() if eq >= pot_odds + 0.02 else check_fold()
                 return call() if eq >= max(0.55, pot_odds + 0.12) else check_fold()
             # Habitual big raiser: its range is wide, so re-shove good hands and call fair prices.
             if bettors and all(is_aggressor(p['name']) for p in bettors):
