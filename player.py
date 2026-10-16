@@ -188,8 +188,38 @@ def chen_score(hole):
     return points
 
 
+_COMBOS = []
+
+
+def range_combos(f):
+    # All 1326 starting hands, strongest first by Chen score; the top f fraction is the range.
+    if not _COMBOS:
+        combos = [(a, b) for i, a in enumerate(FULL_DECK) for b in FULL_DECK[i + 1:]]
+        combos.sort(key=lambda h: -chen_score(list(h)))
+        _COMBOS.extend(combos)
+    return _COMBOS[:max(20, int(len(_COMBOS) * min(1.0, max(0.05, f))))]
+
+
+def equity_vs_range(hole, f):
+    """Preflop heads-up equity against a player who only plays its top f of hands."""
+    rng = [h for h in range_combos(f) if h[0] not in hole and h[1] not in hole]
+    deck = [c for c in FULL_DECK if c not in hole]
+    deadline = time.time() + MC_TIME_BUDGET
+    score = 0.0
+    sims = 0
+    while sims < MC_MAX_SIMS and (sims < 100 or time.time() < deadline):
+        opp = random.choice(rng)
+        rest = [c for c in deck if c != opp[0] and c != opp[1]]
+        board = random.sample(rest, 5)
+        mine = hand_value(list(hole) + board)
+        theirs = hand_value(list(opp) + board)
+        score += 1.0 if mine > theirs else (0.5 if mine == theirs else 0.0)
+        sims += 1
+    return score / sims
+
+
 class Player:
-    VERSION = "nontechyk v14"
+    VERSION = "nontechyk v15"
 
     def betRequest(self, game_state):
         try:
@@ -250,6 +280,15 @@ class Player:
         # so call whenever we beat a random hand by more than the pot odds.
         if not board and to_call > 2 * bb:
             bettors = [p for p in opponents if p['bet'] > 2 * bb]
+            # A single shover: estimate its range from how often it shoves, and call
+            # whenever our equity against that range beats the price.
+            if len(bettors) == 1 and bettors[0]['bet'] >= 0.8 * (bettors[0]['bet'] + bettors[0]['stack']):
+                recent = RECENT.get(bettors[0]['name'], ())
+                width = sum(recent) / float(len(recent)) if len(recent) >= 8 else 0.15
+                eq = equity_vs_range(hole, max(width, 0.08))
+                pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
+                log("vs shove range=%.2f eq=%.2f pot_odds=%.2f" % (width, eq, pot_odds))
+                return call() if eq >= pot_odds + 0.03 else check_fold()
             if bettors and all(is_maniac(p['name']) for p in bettors):
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
