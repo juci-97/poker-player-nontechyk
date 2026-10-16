@@ -189,7 +189,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk v12"
+    VERSION = "nontechyk v13"
 
     def betRequest(self, game_state):
         try:
@@ -290,6 +290,18 @@ class Player:
         m = effective / float(bb)
         heads_up = table_size <= 1
         log("preflop chen=%.1f m=%.1f to_call=%d opp=%d" % (chen, m, to_call, num_opp))
+
+        # Heads-up, unopened: the small blind must play most hands or the blinds bleed us dry.
+        if heads_up and to_call <= bb:
+            eq = equity(hole, [], 1)
+            log("heads-up open eq=%.2f m=%.1f" % (eq, m))
+            if m <= 12:
+                return all_in() if eq >= 0.45 else (call() if to_call == 0 else check_fold())
+            if eq >= 0.45:
+                return raise_by(2 * bb)
+            if to_call == 0 or eq >= 0.38:
+                return call()
+            return check_fold()
 
         # Short stacked: push/fold.
         if m <= 12:
