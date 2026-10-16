@@ -1,10 +1,256 @@
+import random
+import sys
+import time
+from collections import Counter
+
+RANKS = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+         '10': 10, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
+SUITS = {'spades': 0, 'hearts': 1, 'clubs': 2, 'diamonds': 3}
+FULL_DECK = [(r, s) for r in range(2, 15) for s in range(4)]
+
+MC_TIME_BUDGET = 0.2  # seconds per decision; total limit is ~30s per sit'n'go
+MC_MAX_SIMS = 1500
+
+
+def log(*args):
+    print(*args, file=sys.stderr)
+
+
+def parse_card(card):
+    return RANKS[str(card['rank'])], SUITS.get(card['suit'], 0)
+
+
+def straight_high(unique_desc):
+    """Highest straight top card from a descending list of unique ranks, or 0."""
+    ranks = list(unique_desc)
+    if 14 in ranks:
+        ranks.append(1)
+    run = 1
+    for i in range(1, len(ranks)):
+        if ranks[i] == ranks[i - 1] - 1:
+            run += 1
+            if run >= 5:
+                return ranks[i] + 4
+        else:
+            run = 1
+    return 0
+
+
+def hand_value(cards):
+    """Comparable tuple for the best 5-card hand in 5..7 cards."""
+    ranks = sorted((c[0] for c in cards), reverse=True)
+    suit_counts = Counter(c[1] for c in cards)
+    flush_suit, flush_count = suit_counts.most_common(1)[0]
+    flush_ranks = None
+    if flush_count >= 5:
+        flush_ranks = sorted((c[0] for c in cards if c[1] == flush_suit), reverse=True)
+        sf = straight_high(flush_ranks)
+        if sf:
+            return (8, sf)
+
+    groups = sorted(Counter(ranks).items(), key=lambda x: (x[1], x[0]), reverse=True)
+    top_rank, top_count = groups[0]
+    second_count = groups[1][1] if len(groups) > 1 else 0
+
+    if top_count == 4:
+        return (7, top_rank, max(r for r in ranks if r != top_rank))
+    if top_count == 3 and second_count >= 2:
+        return (6, top_rank, groups[1][0])
+    if flush_ranks:
+        return (5,) + tuple(flush_ranks[:5])
+    st = straight_high(sorted(set(ranks), reverse=True))
+    if st:
+        return (4, st)
+    if top_count == 3:
+        kickers = [r for r in ranks if r != top_rank][:2]
+        return (3, top_rank) + tuple(kickers)
+    if top_count == 2 and second_count == 2:
+        p1, p2 = groups[0][0], groups[1][0]
+        kicker = max(r for r in ranks if r != p1 and r != p2)
+        return (2, p1, p2, kicker)
+    if top_count == 2:
+        kickers = [r for r in ranks if r != top_rank][:3]
+        return (1, top_rank) + tuple(kickers)
+    return (0,) + tuple(ranks[:5])
+
+
+def equity(hole, board, num_opponents):
+    """Monte Carlo win probability vs random hands (ties count fractionally)."""
+    num_opponents = max(1, min(num_opponents, 6))
+    known = set(hole) | set(board)
+    deck = [c for c in FULL_DECK if c not in known]
+    need_board = 5 - len(board)
+    draw = need_board + 2 * num_opponents
+    deadline = time.time() + MC_TIME_BUDGET
+    score = 0.0
+    sims = 0
+    while sims < MC_MAX_SIMS and (sims < 100 or time.time() < deadline):
+        sample = random.sample(deck, draw)
+        full_board = board + sample[:need_board]
+        mine = hand_value(hole + full_board)
+        ties = 0
+        lost = False
+        for i in range(num_opponents):
+            start = need_board + 2 * i
+            opp = hand_value(sample[start:start + 2] + full_board)
+            if opp > mine:
+                lost = True
+                break
+            if opp == mine:
+                ties += 1
+        if not lost:
+            score += 1.0 / (ties + 1)
+        sims += 1
+    return score / sims
+
+
+def chen_score(hole):
+    (r1, s1), (r2, s2) = hole
+    hi, lo = max(r1, r2), min(r1, r2)
+    points = {14: 10, 13: 8, 12: 7, 11: 6}.get(hi, hi / 2.0)
+    if r1 == r2:
+        return max(5, points * 2)
+    if s1 == s2:
+        points += 2
+    gap = hi - lo - 1
+    points -= {0: 0, 1: 1, 2: 2, 3: 4}.get(gap, 5)
+    if gap <= 1 and hi < 12:
+        points += 1
+    return points
+
 
 class Player:
-    VERSION = "Default Python folding player"
+    VERSION = "nontechyk tight-aggressive equity bot v1"
 
     def betRequest(self, game_state):
-        return 0
+        try:
+            return int(self.decide(game_state))
+        except Exception as e:
+            log("betRequest error:", repr(e))
+            try:
+                me = game_state['players'][game_state['in_action']]
+                to_call = game_state['current_buy_in'] - me['bet']
+                return to_call if to_call <= 2 * game_state.get('small_blind', 0) * 2 else 0
+            except Exception:
+                return 0
 
     def showdown(self, game_state):
         pass
 
+    def decide(self, gs):
+        players = gs['players']
+        me = players[gs['in_action']]
+        stack = me['stack']
+        to_call = max(0, gs['current_buy_in'] - me['bet'])
+        min_raise = gs.get('minimum_raise', 0)
+        pot = gs.get('pot', 0)
+        bb = max(1, 2 * gs.get('small_blind', 1))
+
+        hole = [parse_card(c) for c in me['hole_cards']]
+        board = [parse_card(c) for c in gs.get('community_cards', [])]
+
+        opponents = [p for i, p in enumerate(players)
+                     if i != gs['in_action'] and p['status'] == 'active']
+        alive = [p for i, p in enumerate(players)
+                 if i != gs['in_action'] and p['status'] != 'out']
+        num_opp = max(1, len(opponents))
+        max_opp_stack = max([p['stack'] + p['bet'] for p in opponents] or [stack])
+        effective = min(stack + me['bet'], max_opp_stack)
+
+        def call():
+            return min(to_call, stack)
+
+        def check_fold():
+            return 0
+
+        def raise_by(amount):
+            amount = max(min_raise, int(amount))
+            total = to_call + amount
+            # If this commits most of our stack, just shove.
+            if total >= stack * 0.6:
+                return stack
+            return min(total, stack)
+
+        def all_in():
+            return stack
+
+        if len(board) == 0:
+            return self.preflop(hole, to_call, stack, bb, pot, effective, num_opp,
+                                len(alive), call, check_fold, raise_by, all_in)
+        return self.postflop(hole, board, to_call, stack, pot, num_opp,
+                             call, check_fold, raise_by, all_in)
+
+    def preflop(self, hole, to_call, stack, bb, pot, effective, num_opp, table_size,
+                call, check_fold, raise_by, all_in):
+        chen = chen_score(hole)
+        m = effective / float(bb)
+        heads_up = table_size <= 1
+        log("preflop chen=%.1f m=%.1f to_call=%d opp=%d" % (chen, m, to_call, num_opp))
+
+        # Short stacked: push/fold.
+        if m <= 12:
+            eq = equity(hole, [], num_opp)
+            share = eq * (num_opp + 1)
+            log("push/fold eq=%.2f share=%.2f" % (eq, share))
+            if to_call >= stack * 0.4:
+                # Shovers' ranges beat random hands, so demand extra equity to call.
+                pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
+                return all_in() if eq >= pot_odds + 0.12 else check_fold()
+            # The shorter we are, the wider we shove (blinds eat us otherwise).
+            push_share = 1.25 if m > 8 else (1.1 if m > 5 else 0.95)
+            if heads_up:
+                push_share -= 0.1
+            if share >= push_share:
+                return all_in()
+            return call() if to_call == 0 else check_fold()
+
+        facing_raise = to_call > bb
+
+        if chen >= 12:  # AA, KK, QQ, AKs
+            if to_call >= stack * 0.25:
+                return all_in()
+            return raise_by(max(3 * bb, 3 * to_call, pot))
+        if chen >= 9:  # JJ-99, AK, AQs, KQs...
+            if not facing_raise:
+                return raise_by(3 * bb)
+            if to_call <= stack * 0.15:
+                return call()
+            return all_in() if chen >= 10 and to_call >= stack * 0.5 else check_fold()
+        if chen >= 7 or (heads_up and chen >= 5):
+            if not facing_raise:
+                return raise_by(2.5 * bb) if num_opp <= 2 or heads_up else call()
+            if to_call <= max(3 * bb, stack * 0.05):
+                return call()
+            return check_fold()
+        if chen >= 5 and to_call <= bb:
+            return call()
+        return call() if to_call == 0 else check_fold()
+
+    def postflop(self, hole, board, to_call, stack, pot, num_opp,
+                 call, check_fold, raise_by, all_in):
+        eq = equity(hole, board, num_opp)
+        pot_odds = to_call / float(pot + to_call) if to_call else 0.0
+        # Strength relative to a fair share of the pot, so multiway hands aren't underplayed.
+        share = eq * (num_opp + 1)
+        log("postflop eq=%.2f share=%.2f pot=%d to_call=%d opp=%d" % (eq, share, pot, to_call, num_opp))
+
+        if eq >= 0.85 or (share >= 1.7 and eq >= 0.4):
+            if to_call >= stack * 0.3:
+                return all_in()
+            return raise_by(pot)
+        if eq >= 0.68 or (share >= 1.4 and eq >= 0.33):
+            if to_call == 0:
+                return raise_by(pot * 0.66)
+            if to_call <= pot * 0.5:
+                return raise_by(pot * 0.75)
+            return call()
+        if eq >= 0.5:
+            if to_call == 0:
+                return raise_by(pot * 0.5)
+            # Big bets usually mean a strong hand; demand extra equity.
+            margin = 0.1 if to_call > pot * 0.5 else 0.0
+            return call() if eq >= pot_odds + margin else check_fold()
+        if to_call == 0:
+            return check_fold()
+        margin = 0.05 if to_call <= pot * 0.3 else 0.15
+        return call() if eq >= pot_odds + margin else check_fold()
