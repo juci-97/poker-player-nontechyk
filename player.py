@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v20"
+    VERSION = "nontechyk v21"
 
     def betRequest(self, game_state):
         try:
@@ -383,6 +383,9 @@ class Player:
             push_share = 1.25 if m > 8 else (1.1 if m > 5 else 0.95)
             if heads_up:
                 push_share -= 0.1
+            # Someone already raised: shoving over a raiser needs a much stronger hand.
+            if to_call > bb:
+                push_share += 0.4
             if share >= push_share:
                 return all_in()
             return call() if to_call == 0 else check_fold()
@@ -417,7 +420,8 @@ class Player:
             pressure = min(1.0, to_call / float(max(pot, 1)))
             discount = 0.08 + 0.25 * pressure
             # Loose bettors bet big with weak hands too: discount less so they can't bully us.
-            if loose_bettor:
+            # Leniency only on the flop: turn and river raises from anyone mean a real hand.
+            if loose_bettor and len(board) == 3:
                 discount *= 0.4
             # Tight bettors bet for value: a bet from them means a real hand.
             elif tight_bettor:
