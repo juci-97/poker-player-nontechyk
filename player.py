@@ -1,7 +1,7 @@
 import random
 import sys
 import time
-from collections import Counter
+from collections import Counter, deque
 
 RANKS = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
          '10': 10, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
@@ -107,6 +107,7 @@ def equity(hole, board, num_opponents):
 # Opponent tracking across hands; the server process stays up between requests.
 SHOVES = Counter()
 HANDS_SEEN = Counter()
+RECENT = {}
 _counted = set()
 
 
@@ -121,15 +122,20 @@ def observe(gs, players, my_index, bb):
         if (hand, name, 'seen') not in _counted:
             _counted.add((hand, name, 'seen'))
             HANDS_SEEN[name] += 1
+            RECENT.setdefault(name, deque(maxlen=20)).append(0)
         total = p.get('bet', 0) + p.get('stack', 0)
         big = p.get('bet', 0) >= max(10 * bb, 0.8 * total)
         if not gs.get('community_cards') and big and (hand, name, 'shove') not in _counted:
             _counted.add((hand, name, 'shove'))
             SHOVES[name] += 1
+            RECENT[name][-1] = 1
 
 
 def is_maniac(name):
-    return SHOVES[name] >= 2 and SHOVES[name] >= 0.3 * HANDS_SEEN[name]
+    # Judge on recent hands only, so a bot that tightens up loses the label quickly.
+    recent = RECENT.get(name, ())
+    shoves = sum(recent)
+    return shoves >= 2 and shoves >= 0.3 * len(recent)
 
 
 def chen_score(hole):
@@ -148,7 +154,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v4"
+    VERSION = "nontechyk tight-aggressive equity bot v5"
 
     def betRequest(self, game_state):
         try:
