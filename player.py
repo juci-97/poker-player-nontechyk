@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v16"
+    VERSION = "nontechyk v17"
 
     def betRequest(self, game_state):
         try:
@@ -317,6 +317,14 @@ class Player:
         if len(board) == 0:
             return self.preflop(hole, to_call, stack, bb, pot, effective, num_opp,
                                 len(alive), call, check_fold, raise_by, all_in)
+        # Two or more players already committing big money: someone has a real hand.
+        big_in = [p for p in opponents if p['bet'] >= max(4 * bb, 0.25 * (p['bet'] + p['stack']))]
+        if board and to_call > 0 and len(big_in) >= 2:
+            eq = equity(hole, board, len(big_in)) - 0.3
+            price = to_call / float(pot + to_call)
+            log("multiway commitment eq=%.2f price=%.2f" % (eq, price))
+            return call() if eq >= max(0.5, price + 0.1) else check_fold()
+
         top_bet = max([p['bet'] for p in opponents] or [0])
         loose_bettor = any(is_loose(p['name']) for p in opponents if p['bet'] == top_bet and top_bet > 0)
         tight_bettor = any(agg_rate(p['name']) is not None and agg_rate(p['name']) <= 0.2 and not is_loose(p['name'])
