@@ -183,7 +183,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk v9"
+    VERSION = "nontechyk v10"
 
     def betRequest(self, game_state):
         try:
@@ -248,15 +248,15 @@ class Player:
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs maniac eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
-                return call() if eq >= pot_odds + 0.06 else check_fold()
+                return call() if eq >= max(0.55, pot_odds + 0.12) else check_fold()
             # Habitual big raiser: its range is wide, so re-shove good hands and call fair prices.
             if bettors and all(is_aggressor(p['name']) for p in bettors):
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs aggressor eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
-                if eq >= 0.62:
+                if eq >= 0.68:
                     return all_in()
-                return call() if eq >= pot_odds + 0.03 else check_fold()
+                return call() if eq >= max(0.55, pot_odds + 0.12) else check_fold()
 
         # Judge by behaviour only (version strings can lie): if every opponent has stayed
         # passive over its recent hands and nobody has bet into us, a min-raise takes the pot.
