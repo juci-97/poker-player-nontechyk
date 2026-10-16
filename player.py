@@ -108,6 +108,7 @@ def equity(hole, board, num_opponents):
 SHOVES = Counter()
 HANDS_SEEN = Counter()
 RECENT = {}
+RAISES = {}
 _counted = set()
 
 
@@ -123,6 +124,9 @@ def observe(gs, players, my_index, bb):
             _counted.add((hand, name, 'seen'))
             HANDS_SEEN[name] += 1
             RECENT.setdefault(name, deque(maxlen=20)).append(0)
+            RAISES.setdefault(name, deque(maxlen=20)).append(0)
+        if not gs.get('community_cards') and p.get('bet', 0) >= 8 * bb:
+            RAISES[name][-1] = 1
         total = p.get('bet', 0) + p.get('stack', 0)
         big = p.get('bet', 0) >= max(10 * bb, 0.8 * total)
         if not gs.get('community_cards') and big and (hand, name, 'shove') not in _counted:
@@ -136,6 +140,12 @@ def is_maniac(name):
     recent = RECENT.get(name, ())
     shoves = sum(recent)
     return shoves >= 2 and shoves >= 0.3 * len(recent)
+
+
+def is_aggressor(name):
+    # Opens big preflop most hands (e.g. a fixed 100-chip raise to steal blinds).
+    recent = RAISES.get(name, ())
+    return sum(recent) >= 3 and sum(recent) >= 0.4 * len(recent)
 
 
 def chen_score(hole):
@@ -154,7 +164,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v5"
+    VERSION = "nontechyk tight-aggressive equity bot v6"
 
     def betRequest(self, game_state):
         try:
@@ -219,6 +229,14 @@ class Player:
                 eq = equity(hole, [], len(bettors))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs maniac eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
+                return call() if eq >= pot_odds + 0.03 else check_fold()
+            # Habitual big raiser: its range is wide, so re-shove good hands and call fair prices.
+            if bettors and all(is_aggressor(p['name']) for p in bettors):
+                eq = equity(hole, [], len(bettors))
+                pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
+                log("vs aggressor eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
+                if eq >= 0.55:
+                    return all_in()
                 return call() if eq >= pot_odds + 0.03 else check_fold()
 
         # Default bots never bet: if nobody has bet into us, a min-raise takes the pot.
