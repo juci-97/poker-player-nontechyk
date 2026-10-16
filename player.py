@@ -109,6 +109,7 @@ SHOVES = Counter()
 HANDS_SEEN = Counter()
 RECENT = {}
 RAISES = {}
+AGG = {}
 _counted = set()
 
 
@@ -125,8 +126,11 @@ def observe(gs, players, my_index, bb):
             HANDS_SEEN[name] += 1
             RECENT.setdefault(name, deque(maxlen=20)).append(0)
             RAISES.setdefault(name, deque(maxlen=20)).append(0)
+            AGG.setdefault(name, deque(maxlen=20)).append(0)
         if not gs.get('community_cards') and p.get('bet', 0) >= 8 * bb:
             RAISES[name][-1] = 1
+        if not gs.get('community_cards') and p.get('bet', 0) > bb:
+            AGG[name][-1] = 1
         total = p.get('bet', 0) + p.get('stack', 0)
         big = p.get('bet', 0) >= max(10 * bb, 0.8 * total)
         if not gs.get('community_cards') and big and (hand, name, 'shove') not in _counted:
@@ -140,6 +144,17 @@ def is_maniac(name):
     recent = RECENT.get(name, ())
     shoves = sum(recent)
     return shoves >= 2 and shoves >= 0.3 * len(recent)
+
+
+def agg_rate(name):
+    # Share of recent hands where this player raised preflop; None until we have seen enough.
+    recent = AGG.get(name, ())
+    return sum(recent) / float(len(recent)) if len(recent) >= 8 else None
+
+
+def is_loose(name):
+    rate = agg_rate(name)
+    return is_maniac(name) or is_aggressor(name) or (rate is not None and rate >= 0.4)
 
 
 def is_aggressor(name):
@@ -164,7 +179,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v6"
+    VERSION = "nontechyk tight-aggressive equity bot v7"
 
     def betRequest(self, game_state):
         try:
@@ -239,9 +254,11 @@ class Player:
                     return all_in()
                 return call() if eq >= pot_odds + 0.03 else check_fold()
 
-        # Default bots never bet: if nobody has bet into us, a min-raise takes the pot.
-        passive = opponents and not maniacs and not any(SHOVES[p['name']] for p in opponents) and \
-            all('folding player' in str(p.get('version', '')).lower() for p in opponents)
+        # Judge by behaviour only (version strings can lie): if every opponent has stayed
+        # passive over its recent hands and nobody has bet into us, a min-raise takes the pot.
+        passive = opponents and not maniacs and all(
+            agg_rate(p['name']) is not None and agg_rate(p['name']) <= 0.1
+            and not sum(RECENT.get(p['name'], ())) for p in opponents)
         if passive and to_call <= (bb if not board else 0):
             log("passive table: min-raise steal")
             return raise_by(min_raise)
@@ -249,7 +266,9 @@ class Player:
         if len(board) == 0:
             return self.preflop(hole, to_call, stack, bb, pot, effective, num_opp,
                                 len(alive), call, check_fold, raise_by, all_in)
-        return self.postflop(hole, board, to_call, stack, pot, num_opp,
+        top_bet = max([p['bet'] for p in opponents] or [0])
+        loose_bettor = any(is_loose(p['name']) for p in opponents if p['bet'] == top_bet and top_bet > 0)
+        return self.postflop(hole, board, to_call, stack, pot, num_opp, loose_bettor,
                              call, check_fold, raise_by, all_in)
 
     def preflop(self, hole, to_call, stack, bb, pot, effective, num_opp, table_size,
@@ -298,13 +317,17 @@ class Player:
             return call()
         return call() if to_call == 0 else check_fold()
 
-    def postflop(self, hole, board, to_call, stack, pot, num_opp,
+    def postflop(self, hole, board, to_call, stack, pot, num_opp, loose_bettor,
                  call, check_fold, raise_by, all_in):
         eq = equity(hole, board, num_opp)
         # A big bet narrows the bettor's range well above random hands: discount our equity.
         if to_call > 0:
             pressure = min(1.0, to_call / float(max(pot, 1)))
-            eq -= 0.05 + 0.2 * pressure
+            discount = 0.05 + 0.2 * pressure
+            # Loose bettors bet big with weak hands too: discount less so they can't bully us.
+            if loose_bettor:
+                discount *= 0.4
+            eq -= discount
         pot_odds = to_call / float(pot + to_call) if to_call else 0.0
         # Strength relative to a fair share of the pot, so multiway hands aren't underplayed.
         share = eq * (num_opp + 1)
