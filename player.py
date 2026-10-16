@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v19"
+    VERSION = "nontechyk v20"
 
     def betRequest(self, game_state):
         try:
@@ -285,6 +285,10 @@ class Player:
             if len(bettors) == 1 and bettors[0]['bet'] >= 0.8 * (bettors[0]['bet'] + bettors[0]['stack']):
                 recent = RECENT.get(bettors[0]['name'], ())
                 width = sum(recent) / float(len(recent)) if len(recent) >= 8 else 0.15
+                # Shove rates jump when the table shrinks: trust the last 5 hands if they are wider.
+                last = list(recent)[-5:]
+                if len(last) == 5 and sum(last) >= 3:
+                    width = max(width, sum(last) / 5.0)
                 eq = equity_vs_range(hole, max(width, 0.08))
                 pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
                 log("vs shove range=%.2f eq=%.2f pot_odds=%.2f" % (width, eq, pot_odds))
