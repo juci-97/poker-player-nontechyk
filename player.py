@@ -104,6 +104,34 @@ def equity(hole, board, num_opponents):
     return score / sims
 
 
+# Opponent tracking across hands; the server process stays up between requests.
+SHOVES = Counter()
+HANDS_SEEN = Counter()
+_counted = set()
+
+
+def observe(gs, players, my_index, bb):
+    if len(_counted) > 20000:
+        _counted.clear()
+    hand = (gs.get('game_id'), gs.get('round'))
+    for i, p in enumerate(players):
+        if i == my_index or p.get('status') == 'out':
+            continue
+        name = p.get('name')
+        if (hand, name, 'seen') not in _counted:
+            _counted.add((hand, name, 'seen'))
+            HANDS_SEEN[name] += 1
+        total = p.get('bet', 0) + p.get('stack', 0)
+        big = p.get('bet', 0) >= max(10 * bb, 0.8 * total)
+        if not gs.get('community_cards') and big and (hand, name, 'shove') not in _counted:
+            _counted.add((hand, name, 'shove'))
+            SHOVES[name] += 1
+
+
+def is_maniac(name):
+    return SHOVES[name] >= 2 and SHOVES[name] >= 0.3 * HANDS_SEEN[name]
+
+
 def chen_score(hole):
     (r1, s1), (r2, s2) = hole
     hi, lo = max(r1, r2), min(r1, r2)
@@ -120,7 +148,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v2"
+    VERSION = "nontechyk tight-aggressive equity bot v3"
 
     def betRequest(self, game_state):
         try:
@@ -174,9 +202,22 @@ class Player:
         def all_in():
             return stack
 
+        observe(gs, players, gs['in_action'], bb)
+        maniacs = [p for p in opponents if is_maniac(p['name'])]
+
+        # Preflop shove from a bot that shoves nearly every hand: its range is random,
+        # so call whenever we beat a random hand by more than the pot odds.
+        if not board and to_call > 2 * bb:
+            bettors = [p for p in opponents if p['bet'] > 2 * bb]
+            if bettors and all(is_maniac(p['name']) for p in bettors):
+                eq = equity(hole, [], len(bettors))
+                pot_odds = min(to_call, stack) / float(pot + min(to_call, stack))
+                log("vs maniac eq=%.2f pot_odds=%.2f" % (eq, pot_odds))
+                return call() if eq >= pot_odds + 0.03 else check_fold()
+
         # Default bots never bet: if nobody has bet into us, a min-raise takes the pot.
-        passive = opponents and all('folding player' in str(p.get('version', '')).lower()
-                                    for p in opponents)
+        passive = opponents and not maniacs and not any(SHOVES[p['name']] for p in opponents) and \
+            all('folding player' in str(p.get('version', '')).lower() for p in opponents)
         if passive and to_call <= (bb if not board else 0):
             log("passive table: min-raise steal")
             return raise_by(min_raise)
