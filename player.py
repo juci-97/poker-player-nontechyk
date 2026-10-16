@@ -8,7 +8,7 @@ RANKS = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
 SUITS = {'spades': 0, 'hearts': 1, 'clubs': 2, 'diamonds': 3}
 FULL_DECK = [(r, s) for r in range(2, 15) for s in range(4)]
 
-MC_TIME_BUDGET = 0.2  # seconds per decision; total limit is ~30s per sit'n'go
+MC_TIME_BUDGET = 0.1  # seconds per decision; total limit is ~30s per sit'n'go
 MC_MAX_SIMS = 1500
 
 
@@ -120,7 +120,7 @@ def chen_score(hole):
 
 
 class Player:
-    VERSION = "nontechyk tight-aggressive equity bot v1"
+    VERSION = "nontechyk tight-aggressive equity bot v2"
 
     def betRequest(self, game_state):
         try:
@@ -173,6 +173,13 @@ class Player:
 
         def all_in():
             return stack
+
+        # Default bots never bet: if nobody has bet into us, a min-raise takes the pot.
+        passive = opponents and all('folding player' in str(p.get('version', '')).lower()
+                                    for p in opponents)
+        if passive and to_call <= (bb if not board else 0):
+            log("passive table: min-raise steal")
+            return raise_by(min_raise)
 
         if len(board) == 0:
             return self.preflop(hole, to_call, stack, bb, pot, effective, num_opp,
