@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v23"
+    VERSION = "nontechyk v24"
 
     def betRequest(self, game_state):
         try:
@@ -439,6 +439,9 @@ class Player:
             # Tight bettors bet for value: a bet from them means a real hand.
             elif tight_bettor:
                 discount *= 1.5
+            # Big river bets are value far more often than bluffs, even from loose bots.
+            if len(board) == 5 and to_call >= pot * 0.5:
+                discount = 0.08 + 0.25 * pressure + 0.1
             eq -= discount
         # They raised over our own bet on this street: that range is strong, and we stop
         # re-raising unless we hold a near-lock (avoids raise wars into sets and flushes).
