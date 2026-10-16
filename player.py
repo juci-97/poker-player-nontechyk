@@ -219,7 +219,7 @@ def equity_vs_range(hole, f):
 
 
 class Player:
-    VERSION = "nontechyk v17"
+    VERSION = "nontechyk v18"
 
     def betRequest(self, game_state):
         try:
@@ -352,9 +352,8 @@ class Player:
                 return call()
             return check_fold()
 
-        # Short stacked: push/fold. Up to 20bb we shove rather than open small, so
-        # re-shovers cannot steal our raise.
-        if m <= 20:
+        # Short stacked: push/fold.
+        if m <= 12:
             eq = equity(hole, [], num_opp)
             share = eq * (num_opp + 1)
             log("push/fold eq=%.2f share=%.2f" % (eq, share))
@@ -385,11 +384,12 @@ class Player:
             return all_in() if chen >= 10 and to_call >= stack * 0.5 else check_fold()
         if chen >= 7 or (heads_up and chen >= 5):
             if not facing_raise:
-                # Never limp: limps get re-shoved and we fold.
-                return raise_by(2.5 * bb) if num_opp <= 2 or heads_up else check_fold()
+                return raise_by(2.5 * bb) if num_opp <= 2 or heads_up else call()
             if to_call <= max(3 * bb, stack * 0.05):
                 return call()
             return check_fold()
+        if chen >= 5 and to_call <= bb:
+            return call()
         return call() if to_call == 0 else check_fold()
 
     def postflop(self, hole, board, to_call, stack, pot, num_opp, loose_bettor, reraised, tight_bettor,
